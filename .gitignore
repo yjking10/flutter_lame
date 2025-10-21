@@ -32,4 +32,4 @@ migrate_working_dir/
 build/
 src/.vs/
 macos/Classes
-ios/Classes
+# ios/Classes

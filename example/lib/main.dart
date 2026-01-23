@@ -1,15 +1,38 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:opus_dart/opus_dart.dart';
+import 'package:opus_flutter/opus_flutter.dart' as opus_flutter;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as path;
 import 'package:flutter_lame/flutter_lame.dart';
 import 'package:wav/wav.dart';
 
-void main() {
+import 'streaming_opus_to_mp3.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p; // 建议添加 path 库方便处理路径
+
+class FileStorageHelper {
+  /// 获取临时沙盒路径（适合转换后的中间产物）
+  static Future<String> getTempSavePath(String fileName) async {
+    final directory = await getTemporaryDirectory();
+    return p.join(directory.path, fileName);
+  }
+
+  /// 获取文档沙盒路径（适合最终保存的音频文件）
+  static Future<String> getDocumentSavePath(String fileName) async {
+    final directory = await getApplicationDocumentsDirectory();
+    return p.join(directory.path, fileName);
+  }
+}
+void main() async{
+  WidgetsFlutterBinding.ensureInitialized();
+  initOpus(await opus_flutter.load());
   runApp(const MyApp());
 }
 
@@ -44,6 +67,50 @@ class _MyAppState extends State<MyApp> {
       inputPath = result.paths[0];
     });
   }
+
+  void selectInputOpusFile() async {
+
+    // final result = await FilePicker.platform.pickFiles(
+    //     type: FileType.custom,
+    //     dialogTitle: "Select Opus file",
+    //     allowedExtensions: ["opus"],
+    //     allowMultiple: false);
+    //
+    // if (result == null) {
+    //   return;
+    // }
+    //
+    // if (result.paths.isEmpty) {
+    //   return;
+    // }
+    //
+    // String outputMp3Path = result.paths[0]!;
+
+    final String outputMp3Path = await FileStorageHelper.getTempSavePath("002256772213.mp3");
+
+    final converter = StreamingOpusToMp3(
+      outputMp3Path: outputMp3Path,
+    );
+
+    final opusByteData = await rootBundle.load('assets/audio/002256772213.opus');
+
+    await converter.process(Stream.value(opusByteData.buffer.asUint8List()));
+    await converter.finish();
+
+    print('opus---> mp3 finish');
+  }
+
+  Stream<List<int>> _getAssetStream(String path) async* {
+    final ByteData data = await rootBundle.load(path);
+    final buffer = data.buffer.asUint8List();
+
+    const int chunkSize = 4096; // 每次读取 4KB
+    for (int i = 0; i < buffer.length; i += chunkSize) {
+      int end = (i + chunkSize < buffer.length) ? i + chunkSize : buffer.length;
+      yield buffer.sublist(i, end);
+    }
+  }
+
 
   void encodeMp3() async {
     if (inputPath == null) {
@@ -122,6 +189,12 @@ class _MyAppState extends State<MyApp> {
                 ),
                 const Divider(),
                 spacerLarge,
+                ElevatedButton(
+                    onPressed: !working ? selectInputOpusFile : null,
+                    child: const Text(
+                      "Select Opus file",
+                      style: textStyle,
+                    )),
                 ElevatedButton(
                     onPressed: !working ? selectInputFile : null,
                     child: const Text(

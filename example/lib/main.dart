@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
+import 'package:flutter_lame_example/opus_to_mp3_streaming.dart' hide StreamingOpusToMp3;
+import 'package:flutter_lame_example/test_pcm_to_ogg_page.dart';
 import 'package:opus_dart/opus_dart.dart';
 import 'package:opus_flutter/opus_flutter.dart' as opus_flutter;
 
@@ -16,6 +18,9 @@ import 'streaming_opus_to_mp3.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p; // 建议添加 path 库方便处理路径
+import 'package:flutter/foundation.dart' show kIsWeb, Float32List;
+import 'package:flutter/material.dart';
+
 
 class FileStorageHelper {
   /// 获取临时沙盒路径（适合转换后的中间产物）
@@ -36,14 +41,26 @@ void main() async{
   runApp(const MyApp());
 }
 
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
-  _MyAppState createState() => _MyAppState();
+  Widget build(BuildContext context) {
+
+    return MaterialApp(
+      home: Home(),
+    );
+  }
 }
 
-class _MyAppState extends State<MyApp> {
+class Home extends StatefulWidget {
+  const Home({super.key});
+
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+class _HomeState extends State<Home> {
   String? inputPath;
   String outputName = "output.mp3";
   bool working = false;
@@ -86,18 +103,7 @@ class _MyAppState extends State<MyApp> {
     //
     // String outputMp3Path = result.paths[0]!;
 
-    final String outputMp3Path = await FileStorageHelper.getTempSavePath("002256772213.mp3");
 
-    final converter = StreamingOpusToMp3(
-      outputMp3Path: outputMp3Path,
-    );
-
-    final opusByteData = await rootBundle.load('assets/audio/002256772213.opus');
-
-    await converter.process(Stream.value(opusByteData.buffer.asUint8List()));
-    await converter.finish();
-
-    print('opus---> mp3 finish');
   }
 
   Stream<List<int>> _getAssetStream(String path) async* {
@@ -110,6 +116,53 @@ class _MyAppState extends State<MyApp> {
       yield buffer.sublist(i, end);
     }
   }
+
+  void selectInputOpusFileStreaming() async {
+
+    // final result = await FilePicker.platform.pickFiles(
+    //     type: FileType.custom,
+    //     dialogTitle: "Select Opus file",
+    //     allowedExtensions: ["opus"],
+    //     allowMultiple: false);
+    //
+    // if (result == null) {
+    //   return;
+    // }
+    //
+    // if (result.paths.isEmpty) {
+    //   return;
+    // }
+    //
+    // String outputMp3Path = result.paths[0]!;
+
+//     final String outputMp3Path = await FileStorageHelper.getTempSavePath("002256772213.mp3");
+//     final file = File(outputMp3Path);
+//     if (file.existsSync()) file.deleteSync();
+//
+//     IOSink sink = file.openWrite();
+//
+//     final converter = StreamingOpusToMp3(
+//     );
+//
+//     final opusByteData = await rootBundle.load('assets/audio/002256772213.opus');
+//
+//     // 假设你有一个完整的 length-prefixed Opus 数据块
+//
+// // 监听 MP3 输出
+//     converter.mp3Stream.listen((Uint8List mp3Chunk) {
+//       // 发送到网络、保存内存、播放等
+//       print('Got MP3 chunk of ${mp3Chunk.length} bytes');
+//       sink.add(mp3Chunk);
+//     });
+//
+// // 启动转换
+//     await converter.process(Stream.value(opusByteData.buffer.asUint8List()));
+//
+//     print('opus---> mp3 finish');
+
+    // await converter.finish();
+  }
+
 
 
   void encodeMp3() async {
@@ -154,9 +207,9 @@ class _MyAppState extends State<MyApp> {
       showDialog(
           context: context,
           builder: (context) => AlertDialog(
-                title: const Text("Error"),
-                content: Text(e.toString()),
-              ));
+            title: const Text("Error"),
+            content: Text(e.toString()),
+          ));
     } finally {
       encoder?.close();
       sink?.close();
@@ -165,79 +218,97 @@ class _MyAppState extends State<MyApp> {
       });
     }
   }
-
   @override
   Widget build(BuildContext context) {
     const textStyle = TextStyle(fontSize: 25);
     const spacerSmall = SizedBox(height: 10);
     const spacerLarge = SizedBox(height: 30);
-    return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Flutter LAME Example'),
-        ),
-        body: SingleChildScrollView(
-          child: Container(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              children: [
-                const Text(
-                  'Call LAME API through FFI that is shipped as source in the package. '
-                  'The native code is built as part of the Flutter Runner build.',
-                  style: textStyle,
-                  textAlign: TextAlign.center,
-                ),
-                const Divider(),
-                spacerLarge,
-                ElevatedButton(
-                    onPressed: !working ? selectInputOpusFile : null,
-                    child: const Text(
-                      "Select Opus file",
-                      style: textStyle,
-                    )),
-                ElevatedButton(
-                    onPressed: !working ? selectInputFile : null,
-                    child: const Text(
-                      "Select WAV file",
-                      style: textStyle,
-                    )),
-                spacerSmall,
-                RichText(
-                  text: TextSpan(
-                      style: const TextStyle(fontSize: 25, color: Colors.black),
-                      children: [
-                        const TextSpan(
-                            text: "Input WAV file: ",
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        TextSpan(text: inputPath)
-                      ]),
-                  textAlign: TextAlign.center,
-                ),
-                spacerSmall,
-                TextFormField(
-                    onChanged: (v) => setState(() {
-                          outputName = v;
-                        }),
-                    decoration:
-                        const InputDecoration(labelText: "Output MP3 filename"),
-                    initialValue: outputName),
-                spacerSmall,
-                ElevatedButton(
-                    onPressed:
-                        inputPath != null && outputName.isNotEmpty && !working
-                            ? encodeMp3
-                            : null,
-                    child: const Text(
-                      "Encode to MP3",
-                      style: textStyle,
-                    )),
-                spacerSmall,
-                if (working) const CircularProgressIndicator(),
-              ],
-            ),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Flutter LAME Example'),
+      ),
+      body: SingleChildScrollView(
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            children: [
+              const Text(
+                'Call LAME API through FFI that is shipped as source in the package. '
+                    'The native code is built as part of the Flutter Runner build.',
+                style: textStyle,
+                textAlign: TextAlign.center,
+              ),
+              const Divider(),
+              spacerLarge,
+
+              ElevatedButton(
+                  onPressed: (){
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => TestPcmToOggPage()),
+                    );
+                  },
+                  child: const Text(
+                    " Opus 2 ogg",
+                    style: textStyle,
+                  )),
+
+
+              ElevatedButton(
+                  onPressed: !working ? selectInputOpusFileStreaming : null,
+                  child: const Text(
+                    "Select Opus file Streaming",
+                    style: textStyle,
+                  )),
+              ElevatedButton(
+                  onPressed: !working ? selectInputOpusFile : null,
+                  child: const Text(
+                    "Select Opus file",
+                    style: textStyle,
+                  )),
+              ElevatedButton(
+                  onPressed: !working ? selectInputFile : null,
+                  child: const Text(
+                    "Select WAV file",
+                    style: textStyle,
+                  )),
+              spacerSmall,
+              RichText(
+                text: TextSpan(
+                    style: const TextStyle(fontSize: 25, color: Colors.black),
+                    children: [
+                      const TextSpan(
+                          text: "Input WAV file: ",
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                      TextSpan(text: inputPath)
+                    ]),
+                textAlign: TextAlign.center,
+              ),
+              spacerSmall,
+              TextFormField(
+                  onChanged: (v) => setState(() {
+                    outputName = v;
+                  }),
+                  decoration:
+                  const InputDecoration(labelText: "Output MP3 filename"),
+                  initialValue: outputName),
+              spacerSmall,
+              ElevatedButton(
+                  onPressed:
+                  inputPath != null && outputName.isNotEmpty && !working
+                      ? encodeMp3
+                      : null,
+                  child: const Text(
+                    "Encode to MP3",
+                    style: textStyle,
+                  )),
+              spacerSmall,
+              if (working) const CircularProgressIndicator(),
+            ],
           ),
         ),
       ),
     );
   }
 }
+

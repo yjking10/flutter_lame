@@ -42,6 +42,7 @@ dependencies:
   opus_dart: ^3.0.1
   share_plus: ^7.2.1
   platform_info: ^4.0.2
+  path_provider: ^2.1.5
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

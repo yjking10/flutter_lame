@@ -84,8 +84,7 @@ class OggPageBuilder {
   Uint8List _int64LE(int v) => Uint8List(8)..buffer.asByteData().setUint64(0, v, Endian.little);
 }
 
-
-class StreamOpusToOgg {
+class OpusToOgg {
   final int sampleRate;
   final int channels;
   final int packetsPerPage;
@@ -98,59 +97,122 @@ class StreamOpusToOgg {
   int _granulePos = 0;
   bool _headerSent = false;
 
-  StreamOpusToOgg({
+  // Splitter logic integrated
+  final List<Uint8List> _inputChunks = [];
+  int _inputTotalLength = 0;
+
+  OpusToOgg({
     this.sampleRate = 16000,
     this.channels = 1,
     this.packetsPerPage = 10,
   });
 
-  // 假设 40 字节对应 20ms 的 Opus 帧
-  // 在 OggOpus 中，Granule Position 始终基于 48kHz 采样率计算
-  int get _step48k => (48000 * 0.02).toInt(); // 960
+  int get _step48k => (48000 * 0.02).toInt();
 
-  void addOpus(Uint8List packet) {
+  /// 同步处理输入的原始数据块（包含 4 字节 BigEndian 长度头）
+  /// 内部会自动拆解成 Opus 包并封装成 Ogg 页
+  Uint8List addOpus(Uint8List data) {
+    if (data.isEmpty) return Uint8List(0);
+    
+    _inputChunks.add(data);
+    _inputTotalLength += data.length;
+
+    final outputBuilder = BytesBuilder();
+
+    // 循环提取完整的 Opus 包并处理
+    while (_inputTotalLength >= 4) {
+      final header = _peekBytes(4);
+      final packetLen = (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
+
+      if (packetLen <= 0 || packetLen > 65535) {
+        // 数据异常，清空缓存
+        _inputChunks.clear();
+        _inputTotalLength = 0;
+        break;
+      }
+
+      if (_inputTotalLength < 4 + packetLen) break;
+
+      _consume(4);
+      final packet = _readBytes(packetLen);
+      
+      // 处理提取出的单个 Opus 包，生成 Ogg 数据块
+      outputBuilder.add(_processPacket(packet));
+    }
+
+    final result = outputBuilder.toBytes();
+    if (result.isNotEmpty) {
+      _controller.add(result);
+    }
+    return result;
+  }
+
+  /// 处理单个 Opus 包
+  Uint8List _processPacket(Uint8List packet) {
+    final builder = BytesBuilder();
+
     if (!_headerSent) {
-      _sendHeaders();
+      builder.add(_sendHeaders());
       _headerSent = true;
     }
 
     _packetBuffer.add(packet);
 
     if (_packetBuffer.length >= packetsPerPage) {
-      _flushPage(isLast: false);
+      builder.add(_flushPage(isLast: false));
     }
+
+    return builder.toBytes();
   }
 
-  void _flushPage({bool isLast = false}) {
-    if (_packetBuffer.isEmpty && !isLast) return;
+  Uint8List _flushPage({bool isLast = false}) {
+    if (_packetBuffer.isEmpty && !isLast) return Uint8List(0);
 
-    // 更新时间戳
     _granulePos += _step48k * _packetBuffer.length;
 
     final page = _ogg.buildPage(
       packets: List.from(_packetBuffer),
       granulePos: _granulePos,
-      headerType: isLast ? 0x04 : 0x00, // 0x04 为 End of Stream
+      headerType: isLast ? 0x04 : 0x00,
     );
 
-    _controller.add(page);
     _packetBuffer.clear();
+    return page;
   }
 
-  void _sendHeaders() {
+  Uint8List _sendHeaders() {
+    final builder = BytesBuilder();
+
     // Page 1: ID Header (BOS)
-    _controller.add(_ogg.buildPage(
+    builder.add(_ogg.buildPage(
       packets: [_buildOpusHead()],
       granulePos: 0,
-      headerType: 0x02, // Beginning of Stream
+      headerType: 0x02,
     ));
 
     // Page 2: Comment Header
-    _controller.add(_ogg.buildPage(
+    builder.add(_ogg.buildPage(
       packets: [_buildOpusTags()],
       granulePos: 0,
       headerType: 0x00,
     ));
+
+    return builder.toBytes();
+  }
+
+  Uint8List flushAndClose() {
+    final lastPage = _flushPage(isLast: true);
+    if (lastPage.isNotEmpty) {
+      _controller.add(lastPage);
+    }
+    _controller.close();
+    return lastPage;
+  }
+
+  @Deprecated('Use flushAndClose instead')
+  Future<void> close() async {
+    flushAndClose();
+    await Future.delayed(const Duration(milliseconds: 50));
   }
 
   Uint8List _buildOpusHead() {
@@ -176,52 +238,12 @@ class StreamOpusToOgg {
     return b.toBytes();
   }
 
-  Future<void> close() async {
-    _flushPage(isLast: true);
-    await Future.delayed(const Duration(milliseconds: 50));
-    await _controller.close();
-  }
-}
-
-class OpusPacketSplitterBE32 {
-  final List<Uint8List> _chunks = [];
-  int _totalLength = 0;
-  final StreamController<Uint8List> _controller = StreamController.broadcast();
-  Stream<Uint8List> get stream => _controller.stream;
-
-  void add(Uint8List data) {
-    if (data.isEmpty) return;
-    _chunks.add(data);
-    _totalLength += data.length;
-    _process();
-  }
-
-  void _process() {
-    while (_totalLength >= 4) {
-      // 1. 读取 4 字节长度头 (Big Endian)
-      final header = _peekBytes(4);
-      final packetLen = (header[0] << 24) | (header[1] << 16) | (header[2] << 8) | header[3];
-
-      if (packetLen <= 0 || packetLen > 65535) {
-        _chunks.clear();
-        _totalLength = 0;
-        return;
-      }
-
-      if (_totalLength < 4 + packetLen) break;
-
-      // 2. 消耗头
-      _consume(4);
-      // 3. 提取 Packet
-      final packet = _readBytes(packetLen);
-      _controller.add(packet);
-    }
-  }
+  // --- Internal Splitter Logic ---
 
   Uint8List _peekBytes(int n) {
     final res = Uint8List(n);
     int count = 0;
-    for (var chunk in _chunks) {
+    for (var chunk in _inputChunks) {
       int take = (n - count).clamp(0, chunk.length);
       res.setRange(count, count + take, chunk);
       count += take;
@@ -234,34 +256,32 @@ class OpusPacketSplitterBE32 {
     final res = Uint8List(n);
     int offset = 0;
     while (offset < n) {
-      final first = _chunks.first;
+      final first = _inputChunks.first;
       int take = (n - offset).clamp(0, first.length);
       res.setRange(offset, offset + take, first);
       offset += take;
       if (take == first.length) {
-        _chunks.removeAt(0);
+        _inputChunks.removeAt(0);
       } else {
-        _chunks[0] = Uint8List.sublistView(first, take);
+        _inputChunks[0] = Uint8List.sublistView(first, take);
       }
     }
-    _totalLength -= n;
+    _inputTotalLength -= n;
     return res;
   }
 
   void _consume(int n) {
     int remain = n;
-    while (remain > 0 && _chunks.isNotEmpty) {
-      final first = _chunks.first;
+    while (remain > 0 && _inputChunks.isNotEmpty) {
+      final first = _inputChunks.first;
       if (first.length <= remain) {
         remain -= first.length;
-        _chunks.removeAt(0);
+        _inputChunks.removeAt(0);
       } else {
-        _chunks[0] = Uint8List.sublistView(first, remain);
+        _inputChunks[0] = Uint8List.sublistView(first, remain);
         remain = 0;
       }
     }
-    _totalLength -= n;
+    _inputTotalLength -= n;
   }
-
-  void close() => _controller.close();
 }

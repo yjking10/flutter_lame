@@ -7,3 +7,8 @@ project(flutter_lame_library VERSION 0.0.1 LANGUAGES C)
 
 add_subdirectory(lame)
 target_compile_definitions(mp3lame PUBLIC DART_SHARED_LIB)
+
+if (ANDROID)
+  # Support Android 15 16k page size.
+  target_link_options(mp3lame PRIVATE "-Wl,-z,max-page-size=16384")
+endif()
